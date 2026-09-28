@@ -97,7 +97,7 @@ python -m venv .venv && .venv\Scripts\activate   # .venv/bin/activate on macOS/L
 pip install -r requirements.txt
 uvicorn server:app --port 8000
 ```
-Expects `best.pt` and `sql_sp.model` from the training run in `results/`.
+Expects `best.pt` and `sql_sp.model` from the training run in `results/` — either train it yourself with the notebook, or download them from [Releases](../../releases/tag/v1.0.0) and skip straight to running the app.
 
 **Frontend:**
 ```bash
@@ -110,3 +110,9 @@ Opens on `http://localhost:5173`, calling the backend for live predictions.
 ## Stack
 
 PyTorch · SentencePiece · FastAPI · React
+
+## References
+
+- Vaswani, A. et al. (2017). [Attention Is All You Need](https://arxiv.org/abs/1706.03762). *NeurIPS 2017*.
+- Zhong, V., Xiong, C., & Socher, R. (2017). [Seq2SQL: Generating Structured Queries from Natural Language using Reinforcement Learning](https://arxiv.org/abs/1709.00103). *arXiv:1709.00103*.
+- [WikiSQL dataset and official evaluator](https://github.com/salesforce/WikiSQL) — Salesforce Research.
