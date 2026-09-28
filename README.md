@@ -1,170 +1,112 @@
-# Text-to-SQL with the Transformer
+# Text-to-SQL Transformer
 
-Generative AI - Assignment 02. An encoder-decoder Transformer (Vaswani et
-al., 2017), implemented from scratch, that turns an English question over a
-table into a SQL query, trained on WikiSQL.
-
-## Contents
+An encoder-decoder Transformer, implemented from scratch in PyTorch, that translates natural language questions into SQL — trained on [WikiSQL](https://github.com/salesforce/WikiSQL) (80K+ question/SQL pairs over 24K Wikipedia tables).
 
 ```
-Text_to_SQL_Transformer.ipynb   standalone notebook - starter code + Tasks 1-5, run on Kaggle/Colab
-results/                        output of the notebook run (checkpoint, plots, predictions, samples.md)
-backend/                        FastAPI server that loads results/best.pt and serves the model
-frontend/                       React front end (Task 6.1) that calls the backend
-README.md                       this file
+Question: What school/club team is Amir Johnson on?
+Columns:  Player, No., Nationality, Position, Years, School/Club Team
+Output:   SELECT School/Club Team FROM table WHERE Player = 'Amir Johnson'
 ```
 
-Everything is in the one notebook - the starter code and the full Task 2-5
-implementation are written directly in its cells, with no other file
-required. Nothing in it uses `nn.Transformer`, `nn.TransformerEncoder/DecoderLayer`,
-`nn.MultiheadAttention`, `F.scaled_dot_product_attention`, Hugging Face
-`transformers`, or any pretrained weights - only `nn.Linear`, `nn.Embedding`,
-`nn.LayerNorm`, `nn.Dropout`, `nn.ReLU`, `torch.softmax`, `torch.matmul`, and
-the given starter code.
+## Overview
 
-## Run it
+- Full implementation of ["Attention Is All You Need"](https://arxiv.org/abs/1706.03762) (Vaswani et al., 2017) — scaled dot-product and multi-head attention, sinusoidal positional encoding, post-norm encoder/decoder stacks — built directly from `nn.Linear` / `nn.Embedding` / `nn.LayerNorm` primitives. No `nn.Transformer`, no `nn.MultiheadAttention`, no pretrained weights.
+- Trained end-to-end on WikiSQL's 56K training examples with a shared BPE vocabulary, label smoothing, and the original paper's warm-up/decay learning-rate schedule.
+- Served through a FastAPI backend and a React front end for interactive querying against the trained model.
 
-Upload `Text_to_SQL_Transformer.ipynb` to Kaggle (or Colab):
+## Project structure
 
-1. Settings -> Accelerator: **GPU**, Internet: **On**.
-2. Run all cells. It clones and extracts WikiSQL itself; `VOCAB_SIZE`,
-   `BATCH_SIZE` and `NUM_EPOCHS` switch to the assignment's real values
-   (8000 / 64 / 20) automatically once real data is found. If no real data is
-   found it falls back to a tiny synthetic dataset with the same schema, so
-   the notebook is still runnable as a smoke test.
-3. The last cells run WikiSQL's own `evaluate.py` on dev (greedy + beam) and
-   once on test, and zip everything in `results/` into `results_bundle.zip`
-   for download from the notebook's Output tab.
+```
+Text_to_SQL_Transformer.ipynb   data pipeline, model, training, and evaluation
+backend/                        FastAPI service that loads the checkpoint and runs inference
+frontend/                       React interface for interactive querying
+results/                        plots, sample predictions, and evaluation metrics
+```
 
-## Configuration (fixed, per the assignment)
+## Architecture
 
 | | |
 |---|---|
-| d_model | 256 |
-| heads | 4 (dk = dv = 64) |
-| encoder / decoder layers | 3 / 3 |
-| feed-forward inner size | 1024 |
-| dropout | 0.1 |
-| normalisation | post-norm, `LayerNorm(x + Sublayer(x))` |
-| weight sharing | encoder embedding = decoder embedding = output projection |
-| label smoothing | 0.1 |
-| optimiser | Adam, beta1=0.9, beta2=0.98, eps=1e-9 |
-| LR schedule | Noam (paper Eq. 3), warmup=4000 |
-| batch size / epochs | 64 / 20 |
+| Embedding dimension | 256 |
+| Attention heads | 4 (64 dim each) |
+| Encoder / decoder layers | 3 / 3 |
+| Feed-forward dimension | 1024 |
+| Dropout | 0.1 |
+| Normalization | Post-norm, `LayerNorm(x + Sublayer(x))` |
+| Weight sharing | Encoder embedding, decoder embedding, and output projection share one matrix |
+| Parameters | 7,577,600 |
 
-## Correctness checks (run inside the notebook, on random tensors)
+Source and target share one 8,000-piece BPE vocabulary. Columns are referred to by position tokens (`<c0>`, `<c1>`, ...) rather than by name, so the model has to learn to *point* at the right column instead of memorizing column names.
 
-- **Causal mask**: changing the last token of a decoder input leaves every
-  earlier decoder output unchanged.
-- **Padding mask**: appending extra `<pad>` tokens to the source leaves the
-  decoder output unchanged; cross-attention rows sum to 1 over the unmasked
-  positions, with ~0 attention mass on the padded ones.
-- **Weight sharing**: `model.generator.weight is model.enc_input.tok.emb.weight`
-  (an `is` check, not just equal values).
-- **Learning-rate schedule**: plotted for the first 20,000 steps; rises
-  linearly for 4,000 steps then decays as `step^-0.5`.
-- **Gold round-trip**: gold dev targets, parsed and run through WikiSQL's own
-  `evaluate.py` - execution accuracy must be above 99%.
+![Positional encoding](results/positional_encoding.png)
+
+## Training
+
+20 epochs on a Tesla T4, Adam with the paper's learning-rate schedule (linear warm-up for 4,000 steps, then inverse-square-root decay), cross-entropy loss with label smoothing.
+
+![Training and dev loss](results/loss_curve.png)
+![Learning rate schedule](results/lr_schedule.png)
+
+| | |
+|---|---|
+| Epochs / best epoch | 20 / 19 |
+| Best dev loss | 2.11 |
+| Training time | ~22 minutes |
 
 ## Results
 
-From the completed 20-epoch run on the full WikiSQL data (Tesla T4).
+Evaluated with WikiSQL's own evaluator (never a custom reimplementation).
 
-### Table 1 - Data
-
-| | Train | Dev | Test |
-|---|---|---|---|
-| Pairs | 56,355 | 8,421 | 15,878 |
-| Mean / max source length (words) | 28.6 / 159 | 28.5 / 121 | 28.5 / 116 |
-| Mean / max target length (words) | 8.6 / 32 | 8.6 / 22 | 8.6 / 27 |
-| Pairs dropped as too long | 19 | 0 | 0 |
-
-Train source/target length in BPE tokens (post-tokeniser, what the model
-actually sees): mean/max source 42.5 / 160, mean/max target 14.8 / 64.
-
-### Table 2 - Model and training
-
-| | |
-|---|---|
-| Trainable parameters | 7,577,600 |
-| Epochs trained / best epoch | 20 / 19 |
-| Best dev loss | 2.1107 |
-| Training time and GPU | ~65 s/epoch, ~22 min total - Tesla T4 |
-
-### Table 3 - Official metrics
-
-| Split | Decoding | Logical form (%) | Execution (%) | Parse failures (%) |
+| Split | Decoding | Logical form | Execution | Parse failures |
 |---|---|---|---|---|
-| Dev | greedy | 9.70 | 16.35 | 0.6 |
-| Dev | beam (4) | 10.52 | 17.60 | 0.6 |
-| Test | beam (4) | 9.71 | 17.44 | 0.8 |
+| Dev | Greedy | 9.70% | 16.35% | 0.6% |
+| Dev | Beam (4) | 10.52% | 17.60% | 0.6% |
+| Test | Beam (4) | 9.71% | 17.44% | 0.8% |
 
-Gold round-trip sanity check (dev, via the official evaluator): 99.57%
-execution accuracy - confirms the data/parser/evaluator pipeline is correct
-independent of model quality.
+| Component (dev) | Accuracy |
+|---|---|
+| Aggregation | 87.6% |
+| Selected column | 30.5% |
+| WHERE clause | 23.5% |
 
-### Table 4 - Component accuracy (dev, beam)
+As a sanity check on the evaluation pipeline itself: feeding the *gold* SQL back through the same parser and evaluator scores **99.6% execution accuracy** — confirming the data pipeline and metric computation are correct, independent of model quality.
 
-| sel column correct (%) | agg correct (%) | WHERE clause correct (%) |
-|---|---|---|
-| 30.5 | 87.6 | 23.5 |
+Aggregation is learned reliably, since it follows fixed keyword patterns ("how many" → COUNT) that hold across every table. Column selection is weaker: the cross-attention map below shows why — attention for copying values locks sharply onto the right source tokens, but attention for choosing a column spreads across most of the candidates instead of committing to one.
 
-Aggregation is learned well; column selection (sel and WHERE) lags well
-behind. The cross-attention map (`results/cross_attention.png`) shows why:
-attention for value tokens is sharply localised, but attention from the
-generated `<cK>` tokens spreads across most column markers instead of
-peaking on the correct one - the model has not reliably learned the
-pointer/copy behaviour needed to identify the right column. Execution
-accuracy (~17%) is below the assignment's LSTM baseline (~36%) despite every
-correctness check (masks, weight sharing, LR schedule, gold round-trip)
-passing - this is a genuine training-quality/architecture limitation at this
-epoch budget, not a masking or evaluation bug.
+![Cross-attention map](results/cross_attention.png)
 
-### Figures
+Ten worked examples (five correct, five wrong, with the failure mode identified for each) are in [`results/samples.md`](results/samples.md).
 
-- `results/positional_encoding.png` - positional-encoding heat-map (Task 1.4).
-- `results/loss_curve.png` - training and dev loss per epoch.
-- `results/lr_schedule.png` - learning-rate schedule.
-- `results/cross_attention.png` - cross-attention map for one dev example (Task 5.3).
+## Validation
 
-### Qualitative samples
+Before trusting the training run, the implementation is checked against a set of behavioral tests, run on random tensors independent of any trained weights:
 
-`results/samples.md` - five correct, five wrong dev examples, with the
-failure named for each wrong one.
+- **Causal masking** — changing the last token of a decoder input leaves every earlier decoder output unchanged.
+- **Padding masking** — appending extra padding to the input leaves the output unchanged; attention weights sum to 1 over the unmasked positions with zero mass on padding.
+- **Weight sharing** — the output projection and the embedding table are verified to be the same tensor object, not just numerically equal.
+- **Learning-rate schedule** — plotted over 20,000 steps and matches the closed-form warm-up/decay formula.
 
-## Web front end (Task 6.1)
+## Running it
 
-A React app talking to a small FastAPI server that loads the trained
-checkpoint and runs real inference - not a mock.
+**Train:** open `Text_to_SQL_Transformer.ipynb` in Kaggle or Colab, enable a GPU, and run all cells. It downloads WikiSQL, trains for 20 epochs, evaluates on dev and test, and packages a `results_bundle.zip` with the checkpoint, tokenizer, and metrics.
 
-1. **Get the checkpoint in place.** Unzip `results_bundle.zip` from the
-   Kaggle run so that `results/best.pt` and `results/sql_sp.model` exist at
-   the repo root (already handled if you just extract the zip into
-   `results/`).
+**Backend:**
+```bash
+cd backend
+python -m venv .venv && .venv\Scripts\activate   # .venv/bin/activate on macOS/Linux
+pip install -r requirements.txt
+uvicorn server:app --port 8000
+```
+Expects `best.pt` and `sql_sp.model` from the training run in `results/`.
 
-2. **Start the backend** (dependencies are already installed in
-   `backend/.venv`):
-   ```bash
-   cd backend
-   .venv\Scripts\uvicorn server:app --port 8000        # Windows
-   .venv/bin/uvicorn server:app --port 8000             # macOS/Linux
-   ```
-   Check it loaded correctly: `curl http://localhost:8000/api/status`.
+**Frontend:**
+```bash
+cd frontend
+npm install
+npm run dev
+```
+Opens on `http://localhost:5173`, calling the backend for live predictions.
 
-3. **Start the frontend** (dependencies already installed in
-   `frontend/node_modules`):
-   ```bash
-   cd frontend
-   npm run dev
-   ```
-   Open the printed `http://localhost:5173` URL.
+## Stack
 
-Type a question and a comma-separated list of column names, pick greedy or
-beam decoding, and it calls the real model and shows the generated SQL (with
-the raw tokenised output available underneath). Verified working end to end
-against the trained checkpoint above.
-
-## Not included here
-
-Blog post, LinkedIn post, and the GitHub push itself - out of scope here by
-design.
+PyTorch · SentencePiece · FastAPI · React
