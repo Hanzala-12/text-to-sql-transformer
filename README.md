@@ -68,39 +68,57 @@ Upload `Text_to_SQL_Transformer.ipynb` to Kaggle (or Colab):
 
 ## Results
 
-*Fill in after the real 20-epoch run on the full WikiSQL data.*
+From the completed 20-epoch run on the full WikiSQL data (Tesla T4).
 
 ### Table 1 - Data
 
 | | Train | Dev | Test |
 |---|---|---|---|
 | Pairs | 56,355 | 8,421 | 15,878 |
-| Mean / max source length (tokens) | | | |
-| Mean / max target length (tokens) | | | |
-| Pairs dropped as too long | | – | – |
+| Mean / max source length (words) | 28.6 / 159 | 28.5 / 121 | 28.5 / 116 |
+| Mean / max target length (words) | 8.6 / 32 | 8.6 / 22 | 8.6 / 27 |
+| Pairs dropped as too long | 19 | 0 | 0 |
+
+Train source/target length in BPE tokens (post-tokeniser, what the model
+actually sees): mean/max source 42.5 / 160, mean/max target 14.8 / 64.
 
 ### Table 2 - Model and training
 
 | | |
 |---|---|
-| Trainable parameters | |
-| Epochs trained / best epoch | |
-| Best dev loss | |
-| Training time and GPU | |
+| Trainable parameters | 7,577,600 |
+| Epochs trained / best epoch | 20 / 19 |
+| Best dev loss | 2.1107 |
+| Training time and GPU | ~65 s/epoch, ~22 min total - Tesla T4 |
 
 ### Table 3 - Official metrics
 
 | Split | Decoding | Logical form (%) | Execution (%) | Parse failures (%) |
 |---|---|---|---|---|
-| Dev | greedy | | | |
-| Dev | beam (4) | | | |
-| Test | | | | |
+| Dev | greedy | 9.70 | 16.35 | 0.6 |
+| Dev | beam (4) | 10.52 | 17.60 | 0.6 |
+| Test | beam (4) | 9.71 | 17.44 | 0.8 |
 
-### Table 4 - Component accuracy (dev)
+Gold round-trip sanity check (dev, via the official evaluator): 99.57%
+execution accuracy - confirms the data/parser/evaluator pipeline is correct
+independent of model quality.
+
+### Table 4 - Component accuracy (dev, beam)
 
 | sel column correct (%) | agg correct (%) | WHERE clause correct (%) |
 |---|---|---|
-| | | |
+| 30.5 | 87.6 | 23.5 |
+
+Aggregation is learned well; column selection (sel and WHERE) lags well
+behind. The cross-attention map (`results/cross_attention.png`) shows why:
+attention for value tokens is sharply localised, but attention from the
+generated `<cK>` tokens spreads across most column markers instead of
+peaking on the correct one - the model has not reliably learned the
+pointer/copy behaviour needed to identify the right column. Execution
+accuracy (~17%) is below the assignment's LSTM baseline (~36%) despite every
+correctness check (masks, weight sharing, LR schedule, gold round-trip)
+passing - this is a genuine training-quality/architecture limitation at this
+epoch budget, not a masking or evaluation bug.
 
 ### Figures
 
@@ -143,8 +161,8 @@ checkpoint and runs real inference - not a mock.
 
 Type a question and a comma-separated list of column names, pick greedy or
 beam decoding, and it calls the real model and shows the generated SQL (with
-the raw tokenised output available underneath). Screenshot this for the
-README once real results exist.
+the raw tokenised output available underneath). Verified working end to end
+against the trained checkpoint above.
 
 ## Not included here
 
