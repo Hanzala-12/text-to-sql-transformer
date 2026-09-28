@@ -1,0 +1,12 @@
+backend/.venv/
+backend/__pycache__/
+frontend/node_modules/
+frontend/dist/
+
+results/*.pt
+results/*.jsonl
+results/*.model
+results/*.vocab
+results_bundle.zip
+
+.ipynb_checkpoints/
